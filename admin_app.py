@@ -7,7 +7,7 @@
 #
 # raw_bucket_name = "feedback-proto-ai-raw"
 # raw_prefix      = "raw_submissions"
-# cur_bucket_name = "feedback-proto-ai-raw"     # 별도 버킷 쓰면 거기로 변경
+# cur_bucket_name = "feedback-proto-ai-raw"   # 별도 버킷 쓰면 변경
 # cur_prefix      = "curated"
 #
 # [gcp_service_account]
@@ -48,7 +48,10 @@ if not (PROJECT_ID and LOCATION and TUNED_NAME and RAW_BUCKET and CUR_BUCKET):
 
 # ---------------- 인증/클라이언트 ----------------
 try:
-    credentials = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
 except Exception as e:
     st.error("Secrets의 [gcp_service_account] JSON을 확인하세요.\n" + repr(e))
     st.stop()
@@ -59,48 +62,54 @@ storage_client = storage.Client(project=PROJECT_ID, credentials=credentials)
 # ---------------- 모델 호출 ----------------
 def _gen_cfg() -> Dict[str, Any]:
     return {
-        "max_output_tokens": 2048,     # 필요시 4096
+        "max_output_tokens": 2048,   # 필요시 4096
         "temperature": 0.7,
         "top_p": 0.95,
-        "top_k": 40,
-        "response_mime_type": "text/plain",
     }
 
+def _extract_text(r) -> str:
+    if getattr(r, "text", None):
+        return (r.text or "").strip()
+    pieces: List[str] = []
+    for c in getattr(r, "candidates", []) or []:
+        content = getattr(c, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
+            for p in parts:
+                t = getattr(p, "text", None)
+                if t:
+                    pieces.append(t)
+    return "\n".join(pieces).strip()
+
 def call_model(prompt: str) -> Tuple[str, Dict[str, Any]]:
-    """튜닝모델 스트리밍 → 동기 폴백"""
     meta: Dict[str, Any] = {"route": []}
 
-    # 1) 스트리밍
-    try:
-        gm = GenerativeModel(TUNED_NAME)
-        parts: List[str] = []
-        for chunk in gm.generate_content(
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
-            generation_config=_gen_cfg(),
-            stream=True,
-        ):
-            t = getattr(chunk, "text", None)
-            if t:
-                parts.append(t)
-        text = "".join(parts).strip()
-        meta["route"].append({"name": "tuned-stream", "ok": bool(text)})
-        if text:
-            return text, meta
-    except Exception as e:
-        meta["route"].append({"name": "tuned-stream", "error": repr(e)})
-
-    # 2) 동기
+    # 1) 튜닝모델 동기 호출
     try:
         gm = GenerativeModel(TUNED_NAME)
         r = gm.generate_content(
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            contents=[{"role":"user","parts":[{"text":prompt}]}],
             generation_config=_gen_cfg(),
         )
-        text = (getattr(r, "text", "") or "").strip()
-        meta["route"].append({"name": "tuned-sync", "ok": bool(text)})
-        return text, meta
+        text = _extract_text(r)
+        meta["route"].append({"name":"tuned-sync", "ok": bool(text)})
+        if text:
+            return text, meta
     except Exception as e:
-        meta["route"].append({"name": "tuned-sync", "error": repr(e)})
+        meta["route"].append({"name":"tuned-sync", "error": repr(e)})
+
+    # 2) 베이스모델 폴백
+    try:
+        base = GenerativeModel("gemini-1.5-pro-002")
+        r2 = base.generate_content(
+            contents=[{"role":"user","parts":[{"text":prompt}]}],
+            generation_config=_gen_cfg(),
+        )
+        text2 = _extract_text(r2)
+        meta["route"].append({"name":"base-sync", "ok": bool(text2)})
+        return text2, meta
+    except Exception as e:
+        meta["route"].append({"name":"base-sync", "error": repr(e)})
         return "", meta
 
 # ---------------- GCS 유틸 ----------------
@@ -200,7 +209,7 @@ tab_gen, tab_review, tab_export = st.tabs(["🧪 생성(초안)", "🗂️ 제�
 # === 탭 1: 생성(초안) ===
 with tab_gen:
     st.header("🧪 생성(초안)")
-    prompt = st.text_area("학생의 상황을 자세히 입력:", height=180, key="admin_gen_prompt")
+    prompt = st.text_area("학생의 상황을 자세히 입력:", height=180, key="gen_prompt")
 
     if st.button("AI 초안 생성", use_container_width=True, key="gen_btn"):
         if not prompt.strip():
