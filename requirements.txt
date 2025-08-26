@@ -1,4 +1,4 @@
 streamlit>=1.33.0
-google-cloud-aiplatform>=1.69.0
+google-cloud-aiplatform==1.69.0
 google-auth>=2.29.0
 pandas>=2.2.2
