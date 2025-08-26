@@ -100,11 +100,14 @@ def is_blocked(resp) -> Tuple[bool, str]:
     return (len(reasons) > 0, ", ".join(dict.fromkeys(reasons)))
 
 def call_model(model_name: str, prompt_text: str) -> Tuple[str, Dict[str, Any]]:
-    """엔드포인트 호출 → (텍스트, 메타)"""
+    """엔드포인트 호출 → (텍스트, 메타)
+    1) 스트리밍으로 우선 수신해 합치기
+    2) 그래도 비면 비-스트리밍 한 번 더 시도(보수용)
+    """
     cfg = types.GenerateContentConfig(
         temperature=0.7,
         max_output_tokens=1024,
-        # 필요 시 안전성 완화(문제되면 이 블록 삭제)
+        response_mime_type="text/plain",   # 명시적으로 텍스트 응답 요구
         safety_settings=[
             types.SafetySetting(category="HARM_CATEGORY_HARASSMENT",        threshold="OFF"),
             types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH",       threshold="OFF"),
@@ -112,14 +115,37 @@ def call_model(model_name: str, prompt_text: str) -> Tuple[str, Dict[str, Any]]:
             types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
         ],
     )
-    resp = client.models.generate_content(
-        model=model_name,
-        contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])],
-        config=cfg,
-    )
-    text = extract_text(resp)
-    blocked, reason = is_blocked(resp)
-    return text, {"blocked": blocked, "reason": reason}
+
+    # 1) 스트리밍 우선
+    chunks: List[str] = []
+    try:
+        for chunk in client.models.generate_content_stream(
+            model=model_name,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])],
+            config=cfg,
+        ):
+            if getattr(chunk, "text", None):
+                chunks.append(chunk.text)
+    except Exception as e:
+        # 스트리밍 자체가 실패하면 아래 비-스트리밍으로 넘어감
+        pass
+
+    text = "".join(chunks).strip()
+
+    # 2) 스트리밍이 비었으면 비-스트리밍으로 한 번 더
+    meta = {"blocked": False, "reason": ""}
+    if not text:
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])],
+            config=cfg,
+        )
+        text = extract_text(resp)
+        blocked, reason = is_blocked(resp)
+        meta["blocked"], meta["reason"] = blocked, reason or ""
+
+    return text, meta
+
 
 # -------------------- GCS 유틸 --------------------
 def gcs_upload_bytes(bucket: str, path: str, data: bytes, content_type: str):
