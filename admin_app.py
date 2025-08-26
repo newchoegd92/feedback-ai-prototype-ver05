@@ -1,21 +1,4 @@
 # app.py  — Admin (리뷰/승인/내보내기) 앱
-# -----------------------------------------------------------
-# ✅ 필요한 Secrets (Streamlit → Settings → Secrets)
-# project_id = "feedback-ai-prototype-ver05"
-# location   = "us-central1"
-# endpoint_name = "projects/800102005669/locations/us-central1/endpoints/6803710882468593664"
-#
-# # raw(사용자 제출 저장소)
-# raw_bucket_name = "feedback-proto-ai-raw"
-# raw_prefix      = "raw_submissions"
-#
-# # curated(관리자 승인 저장소) — 별도 버킷을 쓰면 버킷명 변경
-# cur_bucket_name = "feedback-ai-curated"   # 또는 raw 버킷과 동일 이름
-# cur_prefix      = "curated"
-#
-# [gcp_service_account]
-# ... 서비스계정 JSON 원문 ...
-# -----------------------------------------------------------
 
 import io
 import json
