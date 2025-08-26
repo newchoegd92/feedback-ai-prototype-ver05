@@ -7,6 +7,12 @@ from vertexai.generative_models import GenerativeModel
 from google.oauth2 import service_account
 import google.cloud.aiplatform as aiplatform  # 버전 확인용
 
+# --- 디버그: 실제 로드된 secrets 키와 값 확인 ---
+with st.sidebar:
+    st.write("Loaded secret keys:", list(st.secrets.keys()))
+    st.write("tuned_model_name:", st.secrets.get("tuned_model_name", None))
+
+
 # ---------------- 페이지 기본 설정 ----------------
 st.set_page_config(
     page_title="학습 피드백 AI",
@@ -23,6 +29,18 @@ LOCATION = st.secrets.get("location", "us-central1")
 # 예: "tunedModels/1234567890123456789"  또는
 #     "projects/feedback-ai-prototype-ver05/locations/us-central1/tunedModels/1234567890123456789"
 TUNED_MODEL_NAME = st.secrets.get("projects/800102005669/locations/us-central1/models/2731304531139756032")
+
+PROJECT_ID = st.secrets.get("project_id")
+LOCATION   = st.secrets.get("location")
+
+TUNED_MODEL_NAME = (st.secrets.get("tuned_model_name") or "").strip()
+if not TUNED_MODEL_NAME:
+    st.error("Secrets에 'tuned_model_name'이 없습니다. Settings → Secrets에 tunedModels/... 값을 루트에 넣고 앱을 Restart 하세요.")
+    st.stop()
+if not (TUNED_MODEL_NAME.startswith("tunedModels/") or "/tunedModels/" in TUNED_MODEL_NAME):
+    st.error(f"tuned_model_name 형식 오류: {TUNED_MODEL_NAME}\n반드시 'tunedModels/...' 또는 'projects/.../tunedModels/...' 이어야 합니다.")
+    st.stop()
+
 
 # ---------------- 모델 및 인증 설정 ----------------
 def load_model():
