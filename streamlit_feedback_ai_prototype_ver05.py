@@ -20,6 +20,7 @@ if not RAW_TUNED:
     st.error("Secrets에 'tuned_model_name'이 없습니다. tunedModels/... 또는 projects/.../tunedModels/... 값을 추가하세요.")
     st.stop()
 
+# 짧은 경로면 풀 경로로 변환
 if RAW_TUNED.startswith("tunedModels/"):
     TUNED_MODEL_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/{RAW_TUNED}"
 else:
@@ -30,9 +31,13 @@ if "/tunedModels/" not in TUNED_MODEL_NAME:
     st.stop()
 
 # ───────────────── 인증 & 클라이언트 ─────────────────
+# ★ OAuth scope 필수 (invalid_scope 방지)
+SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
 try:
     credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"]
+        st.secrets["gcp_service_account"],
+        scopes=SCOPES,  # ← 중요
     )
 except Exception as e:
     st.error("Secrets의 [gcp_service_account]가 올바르지 않습니다.\n" + repr(e))
@@ -63,6 +68,7 @@ with st.sidebar:
     st.write(f"Project: `{PROJECT_ID}`")
     st.write(f"Location: `{LOCATION}`")
     st.write(f"tuned_model_name: `{TUNED_MODEL_NAME}`")
+    st.write(f"scopes: `{', '.join(SCOPES)}`")
     if st.session_state.tuned_error:
         st.warning("튜닝 모델 호출 실패 → 베이스 모델 폴백 사용 중")
         st.exception(st.session_state.tuned_error)
