@@ -14,6 +14,38 @@ from google.cloud import storage
 from google import genai
 from google.genai import types
 
+from google import genai
+from google.genai import types
+
+def extract_text(resp) -> str:
+    # 1) 기본
+    if getattr(resp, "text", None):
+        return resp.text.strip()
+    # 2) candidates → parts 순회
+    chunks = []
+    for c in getattr(resp, "candidates", []) or []:
+        content = getattr(c, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
+            for p in parts:
+                t = getattr(p, "text", None)
+                if t:
+                    chunks.append(t)
+    return "\n".join(chunks).strip()
+
+def is_blocked(resp) -> tuple[bool, str]:
+    reasons = []
+    for c in getattr(resp, "candidates", []) or []:
+        fr = getattr(c, "finish_reason", "")
+        if str(fr).upper() in ("SAFETY", "BLOCKLIST"):
+            reasons.append(str(fr))
+        for r in getattr(c, "safety_ratings", []) or []:
+            cat = getattr(r, "category", "")
+            th  = getattr(r, "probability", "") or getattr(r, "threshold", "")
+            reasons.append(f"{cat}:{th}")
+    return (len(reasons) > 0, ", ".join(dict.fromkeys(reasons)))
+
+
 # -------------------- 페이지/상수 --------------------
 st.set_page_config(page_title="개구리 학습 피드백 (Admin)", page_icon="🐸", layout="wide")
 
