@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from vertexai.generative_models import GenerativeModel, Content, Part, GenerationConfig
 
 import vertexai
 from vertexai.generative_models import GenerativeModel
@@ -28,7 +29,6 @@ LOCATION = st.secrets.get("location", "us-central1")
 # ❗ 반드시 Vertex 콘솔의 Tuning 화면에서 '리소스 이름'을 복사해 넣으세요.
 # 예: "tunedModels/1234567890123456789"  또는
 #     "projects/feedback-ai-prototype-ver05/locations/us-central1/tunedModels/1234567890123456789"
-TUNED_MODEL_NAME = st.secrets.get("projects/800102005669/locations/us-central1/models/2731304531139756032")
 
 PROJECT_ID = st.secrets.get("project_id")
 LOCATION   = st.secrets.get("location")
