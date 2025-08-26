@@ -202,7 +202,7 @@ with tab_gen:
     st.header("🧪 생성(초안)")
     prompt = st.text_area("학생의 상황을 자세히 입력:", height=180, key="admin_gen_prompt")
 
-    if st.button("AI 초안 생성", use_container_width=True):
+    if st.button("AI 초안 생성", use_container_width=True, key="gen_btn"):
         if not prompt.strip():
             st.warning("프롬프트를 입력하세요.")
         else:
@@ -219,11 +219,11 @@ with tab_gen:
 
     if st.session_state.get("admin_last_ai"):
         st.subheader("🤖 AI 초안")
-        st.text_area("AI 초안 출력", st.session_state["admin_last_ai"], height=280)
+        st.text_area("AI 초안 출력", st.session_state["admin_last_ai"], height=280, key="gen_output")
 
         st.subheader("✍️ 최종 승인본 → curated 저장")
-        approved = st.text_area("최종 피드백", value=st.session_state["admin_last_ai"], height=260)
-        if st.button("✅ 승인 저장(새 항목)", type="primary"):
+        approved = st.text_area("최종 피드백", value=st.session_state["admin_last_ai"], height=260, key="gen_approved")
+        if st.button("✅ 승인 저장(새 항목)", type="primary", key="gen_save_btn"):
             try:
                 ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
                 day = datetime.utcnow().strftime("%Y-%m-%d")
@@ -251,13 +251,13 @@ with tab_review:
     today = date.today()
     c1,c2,c3,c4 = st.columns([1,1,1,1])
     with c1:
-        start_d = st.date_input("시작일", value=today - timedelta(days=7))
+        start_d = st.date_input("시작일", value=today - timedelta(days=7), key="review_start_date")
     with c2:
-        end_d   = st.date_input("종료일", value=today)
+        end_d   = st.date_input("종료일", value=today, key="review_end_date")
     with c3:
-        kw = st.text_input("키워드(프롬프트/응답/메모 검색)", "")
+        kw = st.text_input("키워드(프롬프트/응답/메모 검색)", "", key="review_kw")
     with c4:
-        limit = st.number_input("최대 로드 수", min_value=50, max_value=3000, value=600, step=50)
+        limit = st.number_input("최대 로드 수", min_value=50, max_value=3000, value=600, step=50, key="review_limit")
 
     all_keys = list_keys(RAW_BUCKET, RAW_PREFIX)
     keys = filter_keys_by_date(all_keys, start_d, end_d)[: int(limit)]
@@ -281,17 +281,22 @@ with tab_review:
         st.subheader("원본 제출")
         st.write("제출시각:", item.get("timestamp"))
         st.write("프롬프트:"); st.code(item.get("prompt",""))
-        st.write("AI 초안:");  st.text_area("원본 AI 초안", item.get("ai_response",""), height=220)
+        st.write("AI 초안:");  st.text_area("원본 AI 초안", item.get("ai_response",""), height=220, key="review_ai_text")
 
         st.subheader("✍️ 승인본(수정/보완)")
-        approved_text = st.text_area("최종 피드백", value=item.get("approved_response", item.get("ai_response","")), height=260)
+        approved_text = st.text_area(
+            "최종 피드백",
+            value=item.get("approved_response", item.get("ai_response","")),
+            height=260,
+            key="review_approved_text"
+        )
         cba, cbb, cbc = st.columns([1,1,1])
         with cba:
-            delete_after = st.checkbox("승인 후 raw 삭제", value=False)
+            delete_after = st.checkbox("승인 후 raw 삭제", value=False, key="review_delete_after")
         with cbb:
-            notes = st.text_input("관리자 메모(선택)", value=item.get("review_notes",""))
+            notes = st.text_input("관리자 메모(선택)", value=item.get("review_notes",""), key="review_notes")
         with cbc:
-            ok = st.button("✅ 승인 저장", type="primary")
+            ok = st.button("✅ 승인 저장", type="primary", key="review_save_btn")
 
         if ok:
             try:
@@ -319,12 +324,12 @@ with tab_review:
 
         prev, nxt = st.columns([1,1])
         with prev:
-            if st.button("◀ 이전"):
+            if st.button("◀ 이전", key="review_prev_btn"):
                 if idx-1 >= 0:
                     st.session_state["review_select"] = options[idx]
                     st.rerun()
         with nxt:
-            if st.button("다음 ▶"):
+            if st.button("다음 ▶", key="review_next_btn"):
                 if idx+1 < len(entries):
                     st.session_state["review_select"] = options[idx+2]
                     st.rerun()
@@ -334,13 +339,13 @@ with tab_export:
     st.header("📦 데이터 내보내기 (curated)")
     c1,c2,c3,c4 = st.columns([1,1,1,1])
     with c1:
-        s2 = st.date_input("시작일", value=date.today()-timedelta(days=30))
+        s2 = st.date_input("시작일", value=date.today()-timedelta(days=30), key="export_start_date")
     with c2:
-        e2 = st.date_input("종료일", value=date.today())
+        e2 = st.date_input("종료일", value=date.today(), key="export_end_date")
     with c3:
-        kw2 = st.text_input("키워드", "")
+        kw2 = st.text_input("키워드", "", key="export_kw")
     with c4:
-        lim2 = st.number_input("최대 로드 수", min_value=50, max_value=5000, value=1500, step=50)
+        lim2 = st.number_input("최대 로드 수", min_value=50, max_value=5000, value=1500, step=50, key="export_limit")
 
     ckeys_all = list_keys(CUR_BUCKET, CUR_PREFIX)
     ckeys = filter_keys_by_date(ckeys_all, s2, e2)[: int(lim2)]
@@ -351,12 +356,12 @@ with tab_export:
 
     if centries:
         df = to_dataframe(centries)
-        st.dataframe(df.head(30), use_container_width=True)
+        st.dataframe(df.head(30), use_container_width=True, key="export_df")
 
         csv_bytes = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("⬇️ CSV 다운로드", data=csv_bytes, file_name="curated_export.csv", mime="text/csv")
+        st.download_button("⬇️ CSV 다운로드", data=csv_bytes, file_name="curated_export.csv", mime="text/csv", key="export_csv")
 
         jsonl_bytes = ("\n".join(to_jsonl_lines(centries))).encode("utf-8")
-        st.download_button("⬇️ JSONL 다운로드 (Vertex 튜닝용)", data=jsonl_bytes, file_name="curated_tuning.jsonl", mime="application/json")
+        st.download_button("⬇️ JSONL 다운로드 (Vertex 튜닝용)", data=jsonl_bytes, file_name="curated_tuning.jsonl", mime="application/json", key="export_jsonl")
     else:
         st.info("내보낼 데이터가 없습니다. 날짜/키워드를 조정해 보세요.")
