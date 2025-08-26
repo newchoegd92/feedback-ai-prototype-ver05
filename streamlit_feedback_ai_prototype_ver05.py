@@ -1,79 +1,75 @@
-# app.py — 학습 피드백 AI (Vertex 튜닝모델 호출 진단 모드)
+# app.py — 학습 피드백 AI (Google GenAI + Vertex 튜닝 모델)
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-import vertexai
-from vertexai.generative_models import (
-    GenerativeModel,
-    Content,
-    Part,
-    GenerationConfig,
-)
+from google import genai
+from google.genai import types
 from google.oauth2 import service_account
-import google.cloud.aiplatform as aiplatform
 
-# 0) 페이지 설정
+# ───────────────── Streamlit 기본 설정 ─────────────────
 st.set_page_config(page_title="학습 피드백 AI", page_icon="🐸", layout="centered")
 
-# 1) Secrets 로드
+# ───────────────── Secrets 읽기/검증 ─────────────────
 PROJECT_ID = st.secrets.get("project_id", "feedback-ai-prototype-ver05")
-LOCATION = st.secrets.get("location", "us-central1")
-PROJECT_NUMBER = st.secrets.get("project_number", None)  # 선택
+LOCATION   = st.secrets.get("location", "us-central1")
+RAW_TUNED  = (st.secrets.get("tuned_model_name") or "").strip()
 
-_raw_model = (st.secrets.get("tuned_model_name") or "").strip()
-if not _raw_model:
-    st.error("Secrets에 tuned_model_name이 없습니다. tunedModels/... 또는 projects/.../tunedModels/... 값을 넣어주세요.")
+if not RAW_TUNED:
+    st.error("Secrets에 'tuned_model_name'이 없습니다. tunedModels/... 또는 projects/.../tunedModels/... 값을 추가하세요.")
     st.stop()
 
-# 짧은 경로면 풀 경로로
-if _raw_model.startswith("tunedModels/"):
-    base_project = PROJECT_ID or PROJECT_NUMBER
-    TUNED_MODEL_NAME = f"projects/{base_project}/locations/{LOCATION}/{_raw_model}"
+# 짧은 경로면 풀 경로로 변환
+if RAW_TUNED.startswith("tunedModels/"):
+    TUNED_MODEL_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/{RAW_TUNED}"
 else:
-    TUNED_MODEL_NAME = _raw_model
+    TUNED_MODEL_NAME = RAW_TUNED
 
 if "/tunedModels/" not in TUNED_MODEL_NAME:
     st.error(f"tuned_model_name 형식 오류: {TUNED_MODEL_NAME}")
     st.stop()
 
-# 2) 인증/초기화 + 모델 로드
-def load_model():
-    try:
-        creds = service_account.Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"]
-        )
-    except Exception as e:
-        st.error("Secrets의 [gcp_service_account]가 올바르지 않습니다.\n" + repr(e))
-        st.stop()
+# ───────────────── 인증/클라이언트 ─────────────────
+try:
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"]
+    )
+except Exception as e:
+    st.error("Secrets의 [gcp_service_account]가 올바르지 않습니다.\n" + repr(e))
+    st.stop()
 
-    try:
-        vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=creds)
-    except Exception as e:
-        st.error("Vertex AI 초기화 실패.\n" + repr(e))
-        st.stop()
+# google-genai 클라이언트 (Vertex 모드)
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+    credentials=credentials,
+)
 
-    try:
-        m = GenerativeModel(TUNED_MODEL_NAME)
-        return m, None
-    except Exception as e:
-        # 폴백
-        return GenerativeModel("gemini-1.5-flash-001"), e
+# ───────────────── 세션 상태 ─────────────────
+if "log" not in st.session_state:
+    st.session_state.log = []
+if "last_ai" not in st.session_state:
+    st.session_state.last_ai = ""
+if "last_prompt" not in st.session_state:
+    st.session_state.last_prompt = ""
+if "used_model" not in st.session_state:
+    st.session_state.used_model = TUNED_MODEL_NAME
+if "tuned_error" not in st.session_state:
+    st.session_state.tuned_error = None
 
-model, tuned_model_error = load_model()
-
-# 3) 사이드바 정보/디버그
+# ───────────────── 사이드바 ─────────────────
 with st.sidebar:
     st.markdown("**환경 정보**")
     st.write(f"Project: `{PROJECT_ID}`")
     st.write(f"Location: `{LOCATION}`")
-    st.write(f"aiplatform: `{aiplatform.__version__}`")
     st.write(f"tuned_model_name: `{TUNED_MODEL_NAME}`")
-    if tuned_model_error:
-        st.warning("튜닝 모델 로드 실패 → 임시로 베이스 모델 사용 중")
-        st.exception(tuned_model_error)
+    if st.session_state.tuned_error:
+        st.warning("튜닝 모델 호출 실패 → 베이스 모델로 폴백 사용 중")
+        st.exception(st.session_state.tuned_error)
 
-# 4) UI
+# ───────────────── UI ─────────────────
 st.title("🐸 독T의 학습 피드백 AI")
 st.markdown("---")
 user_prompt = st.text_area("학생의 상황을 자세히 입력해주세요:", height=180, key="prompt_input")
@@ -87,62 +83,54 @@ with col2:
 if clear_clicked:
     st.session_state.last_ai = ""
     st.session_state.last_prompt = ""
+    st.session_state.used_model = TUNED_MODEL_NAME
+    st.session_state.tuned_error = None
     st.rerun()
 
-# 5) 호출 함수 — 3단계 전략 (어느 포맷에서 성공하는지 자동탐색)
-def generate_ai_response(prompt_text: str) -> str:
-    errors = []
+# ───────────────── 호출 함수 ─────────────────
+def call_model(model_name: str, prompt_text: str) -> str:
+    """google-genai 정석 포맷으로 호출"""
+    resp = client.models.generate_content(
+        model=model_name,
+        contents=[types.Content(role="user", parts=[types.Part.from_text(prompt_text)])],
+        config=types.GenerateContentConfig(
+            temperature=0.7,
+            max_output_tokens=1024,
+            # 안전/추가설정은 기본값 사용 (불필요한 400 방지)
+        ),
+    )
+    return resp.text or ""
 
-    # (A) 가장 단순: 문자열 한 줄
-    try:
-        r = model.generate_content(prompt_text)
-        return r.text or ""
-    except Exception as e:
-        errors.append(("A:string", e))
-
-    # (B) dict 기반 contents (튜닝 샘플과 동일 구조)
-    try:
-        r = model.generate_content(
-            contents=[{"role": "user", "parts": [{"text": prompt_text}]}]
-        )
-        return r.text or ""
-    except Exception as e:
-        errors.append(("B:dict-contents", e))
-
-    # (C) Content/Part + GenerationConfig 객체 (권장)
-    try:
-        cfg = GenerationConfig(max_output_tokens=256, temperature=0.7)
-        r = model.generate_content(
-            [Content(role="user", parts=[Part.from_text(prompt_text)])],
-            generation_config=cfg,
-        )
-        return r.text or ""
-    except Exception as e:
-        errors.append(("C:class+config", e))
-
-    # 세 경우 모두 실패 → 상세 에러 표시
-    st.error("모든 호출 포맷에서 오류가 발생했습니다. 아래 Trace를 확인하세요.")
-    for tag, err in errors:
-        st.markdown(f"**{tag} 실패:**")
-        st.exception(err)
-    raise RuntimeError("All invocation patterns failed")
-
-# 6) 생성 버튼 처리
+# ───────────────── 생성 버튼 처리 ─────────────────
 if gen_clicked:
     if not user_prompt.strip():
         st.warning("학생의 상황을 입력해주세요.")
     else:
         with st.spinner("AI가 강사님의 철학으로 답변을 생성 중입니다..."):
             try:
-                ai_text = generate_ai_response(user_prompt)
-                st.session_state.last_ai = ai_text
-                st.session_state.last_prompt = user_prompt
-            except Exception:
-                pass
+                # 1) 튜닝 모델 우선 시도
+                ai_text = call_model(TUNED_MODEL_NAME, user_prompt)
+                st.session_state.used_model = TUNED_MODEL_NAME
+                st.session_state.tuned_error = None
+            except Exception as tuned_err:
+                # 2) 실패 시 베이스 모델로 폴백 (동작 확인용)
+                st.session_state.tuned_error = tuned_err
+                try:
+                    base_model = "models/gemini-2.5-pro"  # google-genai의 Vertex 경로 표기
+                    ai_text = call_model(base_model, user_prompt)
+                    st.session_state.used_model = base_model
+                except Exception as base_err:
+                    st.error("답변 생성 중 오류가 발생했습니다.")
+                    st.exception(tuned_err)
+                    st.exception(base_err)
+                    raise
+            st.session_state.last_ai = ai_text
+            st.session_state.last_prompt = user_prompt
 
-# 7) 결과/편집/저장
-if st.session_state.get("last_ai"):
+# ───────────────── 결과/편집/저장 ─────────────────
+if st.session_state.last_ai:
     st.subheader("🤖 AI 초안")
+    st.caption(f"사용한 모델: `{st.session_state.used_model}`")
     st.write(st.session_state.last_ai)
 
     st.markdown("### ✍️ 최종 승인용: 수정/보완해서 저장")
@@ -155,19 +143,19 @@ if st.session_state.get("last_ai"):
 
     if st.button("기록 저장", type="primary"):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.session_state.log = st.session_state.get("log", [])
         st.session_state.log.append(
             {
                 "timestamp": ts,
                 "prompt": st.session_state.last_prompt,
                 "ai_response": st.session_state.last_ai,
                 "approved_response": approved.strip(),
+                "used_model": st.session_state.used_model,
             }
         )
         st.success("기록되었습니다. 아래에서 CSV로 내려받을 수 있습니다.")
 
-# 8) 로그 다운로드
-if st.session_state.get("log"):
+# ───────────────── 로그 다운로드 ─────────────────
+if st.session_state.log:
     st.markdown("---")
     st.subheader("📝 피드백 기록 다운로드")
     st.caption("AI 초안과 강사님이 승인/수정한 최종 답변이 함께 저장됩니다.")
